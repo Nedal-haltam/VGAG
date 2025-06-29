@@ -13,17 +13,14 @@ namespace VGAG
 {
     public static class clsVGAG
     {
-
         enum Mode
         {
             writing, drawing
         }
-
         class Cell
         {
             public Rectangle rect;
             public Color color;
-            
             public bool drawn;
             public Cell()
             {
@@ -31,7 +28,6 @@ namespace VGAG
                 color = Color.Black;
                 drawn = false;
             }
-
             public Cell(Rectangle rect, Color color)
             {
                 this.rect = rect;
@@ -45,18 +41,20 @@ namespace VGAG
         const int RS = 5; // big mode
         const int CHARW = 6;
         const int CHARH = 8;
-        const char SPECIAL_CHAR = '`';
         static int DelayBackSpace = 0;
         static int CursorDelay = 0;
         static bool displaycursor = true;
         static Rectangle boundary;
+        static List<int> newlines = [];
         static bool small = false;
         static int rectsize = (small) ? 1 : RS;
         static int brushsize = (small) ? BS : 0;
         static bool capital = false;
+        static string text = "";
 
 
         static int limit(int val, int lo, int hi) => (val <= lo) ? lo : ((val >= hi) ? hi : val);
+        static int NumberOfCharactersOnScreen() => text.Length - newlines.Count + newlines.Sum();
         static List<List<Cell>> InitGrid(Rectangle boundary)
         {
             Color BackColor = Color.Black;
@@ -203,7 +201,7 @@ namespace VGAG
         {
             return (KeyboardKey.A <= key && key <= KeyboardKey.Z) ||
                    (KeyboardKey.Zero <= key && key <= KeyboardKey.Nine) ||
-                   key == KeyboardKey.Equal || key == KeyboardKey.Space;
+                   key == KeyboardKey.Equal || key == KeyboardKey.Space || key == KeyboardKey.Enter || key == KeyboardKey.KpEnter;
         }
         static List<List<Color>> GetChar(int width, int height, char c)
         {
@@ -263,17 +261,29 @@ namespace VGAG
         }
 
 
-        static void _DrawText(Rectangle TextBoundary, ref List<List<Cell>> grid, string text)
+        static void MyDrawText(Rectangle TextBoundary, ref List<List<Cell>> grid, string text)
         {
-
             if (text.Length == 0) return;
             float small_displayrectsize = (small) ? RS : 1.0f;
             List<List<Color>> Char;
-
+            int NewLineIndex = 0;
+            int index = 0;
             for (int i = 0; i < text.Length; i++)
             {
-                Char = GetChar(CHARW, CHARH, (text[i] == SPECIAL_CHAR) ? ' ' : text[i]);
-                AddCharToGrid(ref grid, Char, TextBoundary, i);
+                if (text[i] == '\n')
+                {
+                    int count = newlines[NewLineIndex++];
+                    Char = GetChar(CHARW, CHARH, ' ');
+                    for (int j = 0; j < count; j++)
+                    {
+                        AddCharToGrid(ref grid, Char, TextBoundary, index++);
+                    }
+                }
+                else
+                {
+                    Char = GetChar(CHARW, CHARH, text[i]);
+                    AddCharToGrid(ref grid, Char, TextBoundary, index++);
+                }
             }
         }
         static List<List<Color>> GetGridColor(ref List<List<Cell>> grid)
@@ -607,7 +617,6 @@ namespace VGAG
             int commdiv = 1;
             int OrigW = 640 / commdiv; // for the screen to display on
             int OrigH = 480 / commdiv; // for the screen to display on
-            string text = "";
 
 
             SetConfigFlags(ConfigFlags.AlwaysRunWindow);
@@ -628,7 +637,6 @@ namespace VGAG
             }; // the TextBoundary specs are square wise, like the character map
             boundary = new(x, y, bw, bh);
             List<List<Cell>> grid = InitGrid(boundary);
-            List<int> newlines = new List<int>();
             bool changed = false;
             bool IterateGOL = false;
             while (!WindowShouldClose())
@@ -645,7 +653,7 @@ namespace VGAG
                 }
                 bool Ctrl = IsKeyDown(KeyboardKey.LeftControl) || IsKeyDown(KeyboardKey.RightControl);
                 string FPS = GetFPS().ToString();
-                DrawText($"FPS: {FPS}\nText Shown: {text}", 0, 0, 20, Color.White);
+                DrawText($"FPS: {FPS}", 0, 0, 20, Color.White);
 
                 if (CursorDelay++ % 30 == 0)
                 {
@@ -695,7 +703,7 @@ namespace VGAG
                         {
                             string filepath = fileDialog.FileName;
                             if (m == Mode.writing)
-                                RemoveCharFromGrid(ref grid, GetChar(CHARW, CHARH, ' '), TextBoundary, text.Length);
+                                RemoveCharFromGrid(ref grid, GetChar(CHARW, CHARH, ' '), TextBoundary, NumberOfCharactersOnScreen());
                             List<List<Color>> gridc = GetGridColor(ref grid);
                             VGAG(ref gridc, filepath, 12);
                         }
@@ -719,30 +727,26 @@ namespace VGAG
                         if (text.Length > 0 && (key == KeyboardKey.Backspace || ContinueBackSpace))
                         {
                             changed = true;
-                            int i = text.Length - 1;
-                            if (text[i] == SPECIAL_CHAR)
+                            if (text[^1] == '\n')
                             {
-                                i -= newlines[^1];
                                 newlines = newlines[..^1];
-                                i++;
                             }
-
-                            text = text[..^(text.Length - i)];
+                            text = text[..^1];
                             FillGrid(ref grid, Color.Black);
                             displaycursor = true;
                         }
                         else if (key == KeyboardKey.Enter)
                         {
-                            changed = true;
-                            int numberofchars = (int)(TextBoundary.Width / CHARW);
-                            int count = numberofchars - (text.Length % numberofchars);
-                            if (text.Length + count < MaxChars)
+                            int CharPerLine = (int)(TextBoundary.Width / CHARW);
+                            int count = CharPerLine - (NumberOfCharactersOnScreen() % CharPerLine);
+                            if (NumberOfCharactersOnScreen() + count < MaxChars)
                             {
-                                for (int i = 0; i < count; i++) text += SPECIAL_CHAR;
+                                changed = true;
                                 newlines.Add(count);
+                                text += '\n';
                             }
                         }
-                        else if (text.Length < MaxChars && IsValidKey(key))
+                        else if (NumberOfCharactersOnScreen() < MaxChars && IsValidKey(key))
                         {
                             changed = true;
                             char car = (char)key;
@@ -792,17 +796,17 @@ namespace VGAG
                 {
                     if (changed)
                     {
-                        _DrawText(TextBoundary, ref grid, text);
+                        MyDrawText(TextBoundary, ref grid, text);
                     }
                     if (displaycursor && !(Ctrl && IsKeyPressed(KeyboardKey.S)))
                     {
                         List<List<Color>> Char = GetChar(CHARW, CHARH, '|');
-                        AddCharToGrid(ref grid, Char, TextBoundary, text.Length);
+                        AddCharToGrid(ref grid, Char, TextBoundary, NumberOfCharactersOnScreen());
                     }
                     else
                     {
                         List<List<Color>> Char = GetChar(CHARW, CHARH, ' ');
-                        AddCharToGrid(ref grid, Char, TextBoundary, text.Length);
+                        AddCharToGrid(ref grid, Char, TextBoundary, NumberOfCharactersOnScreen());
                     }
                 }
                 UpdateGrid_drawing(ref grid, brushsize);
